@@ -52,6 +52,7 @@ class SongInfo(InfoBase):
     from_cue: bool = False
 
     language: Language | None = None
+    extra: dict | None = None
 
     @property
     def full_title(self) -> str:
@@ -105,6 +106,7 @@ class SongInfo(InfoBase):
             else None,
             from_cue=info["from_cue"] if "from_cue" in info and isinstance(info["from_cue"], bool) else False,
             language=get_enum(Language, info["language"]) if "language" in info and isinstance(info["language"], str) else None,
+            extra=info["extra"] if "extra" in info and isinstance(info["extra"], dict) else None,
         )
 
 

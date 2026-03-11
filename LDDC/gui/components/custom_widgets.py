@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 from typing import Any
 
-from PySide6.QtCore import QEvent, QModelIndex, QObject, QPersistentModelIndex, Qt, Signal, Slot
+from PySide6.QtCore import QEvent, QModelIndex, QObject, QPersistentModelIndex, QPoint, Qt, Signal, Slot
 from PySide6.QtGui import QColor, QCursor, QDropEvent, QHelpEvent, QMouseEvent, QPainter, QResizeEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -160,7 +160,7 @@ class CheckBoxListWidget(QListWidget):
         super().__init__(parent)
         self.setDragEnabled(True)
         self.setDragDropMode(QListWidget.DragDropMode.InternalMove)
-        self.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self.setSelectionMode(QListWidget.SelectionMode.NoSelection)
 
         self.list_type = ""
         language_changed.connect(self.retranslate)
@@ -168,6 +168,34 @@ class CheckBoxListWidget(QListWidget):
     def dropEvent(self, event: QDropEvent) -> None:
         super().dropEvent(event)
         self.data_changed.emit()
+
+    def _get_item_from_widget(self, widget: QObject) -> QListWidgetItem | None:
+        for i in range(self.count()):
+            item = self.item(i)
+            if self.itemWidget(item) is widget:
+                return item
+        return None
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.drag_start_pos = event.pos()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if not (event.buttons() & Qt.MouseButton.LeftButton):
+            return
+        if not hasattr(self, "drag_start_pos"):
+            return
+        if (event.pos() - self.drag_start_pos).manhattanLength() < QApplication.startDragDistance():
+            return
+
+        item = self.itemAt(self.drag_start_pos)
+        if item:
+            self.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+            item.setSelected(True)
+            super().mouseMoveEvent(event)
+            item.setSelected(False)
+            self.setSelectionMode(QListWidget.SelectionMode.NoSelection)
 
     def add_item(self, data: str, checked: bool) -> None:
         check_box = QCheckBox()
@@ -205,7 +233,13 @@ class CheckBoxListWidget(QListWidget):
         elif isinstance(event, QMouseEvent) and event.type() == QEvent.Type.MouseMove:
             press_position = self.viewport().property("pressPosition")
             if press_position and (event.pos() - press_position).manhattanLength() > QApplication.startDragDistance():
-                self.startDrag(Qt.DropAction.MoveAction)
+                item = self._get_item_from_widget(source)
+                if item:
+                    self.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+                    item.setSelected(True)
+                    self.startDrag(Qt.DropAction.MoveAction)
+                    item.setSelected(False)
+                    self.setSelectionMode(QListWidget.SelectionMode.NoSelection)
                 self.viewport().setProperty("pressPosition", None)
         return super().eventFilter(source, event)
 

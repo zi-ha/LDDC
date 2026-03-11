@@ -31,6 +31,7 @@ class LocalMatchWidget(QWidget, Ui_local_match):
     def __init__(self) -> None:
         super().__init__()
         self.setupUi(self)
+        self.save2tag_mode_comboBox.setCurrentIndex(1)
         self.setAcceptDrops(True)  # 启用拖放功能
         self.connect_signals()
 

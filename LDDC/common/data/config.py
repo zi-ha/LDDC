@@ -43,6 +43,7 @@ class Config(dict):
             "ID3_version": "v2.3",
 
             "multi_search_sources": ["QM", "KG", "NE"],
+            "metadata_search_sources": ["QM", "NE"],
 
             "langs_order": ["roma", "orig", "ts"],
             "skip_inst_lyrics": True,

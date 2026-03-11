@@ -160,6 +160,18 @@ class Ui_settings:
 
         self.verticalLayout_2.addWidget(self.multi_search_source_list)
 
+        self.label_metadata_search = QLabel(self.groupBox_4)
+        self.label_metadata_search.setObjectName("label_metadata_search")
+        self.label_metadata_search.setText("元数据搜索源：")
+        self.verticalLayout_2.addWidget(self.label_metadata_search)
+
+        self.metadata_search_source_list = CheckBoxListWidget(self.groupBox_4)
+        self.metadata_search_source_list.setObjectName("metadata_search_source_list")
+        self.metadata_search_source_list.setSizePolicy(sizePolicy4)
+        self.metadata_search_source_list.setMaximumSize(QSize(100, 16777215))
+        self.metadata_search_source_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.verticalLayout_2.addWidget(self.metadata_search_source_list)
+
         self.gridLayout_6.addWidget(self.groupBox_4, 1, 1, 1, 1)
 
         self.groupBox_3 = QGroupBox(self.scrollAreaWidgetContents)

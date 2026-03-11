@@ -16,6 +16,7 @@ from LDDC.gui.exit_manager import exit_manager
 from .about import AboutWidget
 from .batch_convert import BatchConvertWidget
 from .local_match import LocalMatchWidget
+from .metadata.editor import MusicMetadataEditorWidget
 from .open_lyrics import OpenLyricsWidget
 from .search import SearchWidget
 from .setting import SettingWidget
@@ -43,6 +44,7 @@ class MainWindow(SidebarWindow):
 
         self.search_widget = SearchWidget()
         self.local_match_widget = LocalMatchWidget()
+        self.metadata_editor_widget = MusicMetadataEditorWidget()
         self.settings_widget = SettingWidget()
         self.about_widget = AboutWidget()
         self.open_lyrics_widget = OpenLyricsWidget()
@@ -55,6 +57,7 @@ class MainWindow(SidebarWindow):
     def init_widgets(self) -> None:
         self.add_widget(self.tr("搜索"), self.search_widget)
         self.add_widget(self.tr("本地匹配"), self.local_match_widget)
+        self.add_widget(self.tr("元数据编辑"), self.metadata_editor_widget)
         self.add_widget(self.tr("打开歌词"), self.open_lyrics_widget)
         self.add_widget(self.tr("批量转换"), self.batch_convert_widget)
         self.add_widget(self.tr("关于"), self.about_widget, Direction.BOTTOM)

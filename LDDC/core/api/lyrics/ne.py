@@ -189,6 +189,11 @@ class NEAPI(CloudAPI):
                 artist=Artist(singer["name"] for singer in info["ar"] if singer["name"] != ""),
                 album=info["al"]["name"],
                 duration=info["dt"],
+                extra={
+                    "picUrl": info["al"].get("picUrl"),
+                    "publishTime": info.get("publishTime"),
+                    "no": info.get("no"),
+                },
             )
             for info in songinfos
         ]

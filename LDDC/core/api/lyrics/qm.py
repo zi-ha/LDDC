@@ -152,6 +152,12 @@ class QMAPI(CloudAPI):
                 album=info["album"]["name"],
                 duration=info["interval"] * 1000,
                 language=LANGUAGE_MAPPING.get(info["language"], Language.OTHER),
+                extra={
+                    "album_id": info["album"]["id"],
+                    "album_mid": info["album"]["mid"],
+                    "public_time": info.get("time_public") or info["album"].get("time_public"),
+                    "index_album": info.get("index_album"),
+                },
             )
             for info in songinfos
         ]

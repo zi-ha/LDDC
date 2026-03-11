@@ -2,9 +2,21 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import os
 
-from PySide6.QtCore import Qt, QUrl, Slot
+from PySide6.QtCore import QEvent, QObject, QSize, Qt, QUrl, Slot
 from PySide6.QtGui import QDesktopServices, QFont, QFontDatabase, QGuiApplication
-from PySide6.QtWidgets import QFileDialog, QListWidgetItem, QWidget
+from PySide6.QtWidgets import (
+    QComboBox,
+    QFileDialog,
+    QFrame,
+    QHBoxLayout,
+    QListWidget,
+    QListWidgetItem,
+    QScrollArea,
+    QSpinBox,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from LDDC.common.data.cache import cache
 from LDDC.common.data.config import cfg
@@ -19,8 +31,71 @@ class SettingWidget(QWidget, Ui_settings):
     def __init__(self) -> None:
         super().__init__()
         self.setupUi(self)
+        self.reconstruct_ui()
         self.init_ui()
         self.connect_signals()
+
+    def reconstruct_ui(self) -> None:
+        groups = [
+            (self.tr("保存设置"), self.groupBox),
+            (self.tr("歌词设置"), self.groupBox_2),
+            (self.tr("桌面歌词"), self.groupBox_3),
+            (self.tr("搜索设置"), self.groupBox_4),
+            (self.tr("翻译设置"), self.groupBox_7),
+            (self.tr("其他设置"), self.groupBox_6),
+            (self.tr("缓存设置"), self.groupBox_5),
+        ]
+
+        self.nav_list = QListWidget()
+        self.nav_list.setFixedWidth(150)
+        self.nav_list.setFrameShape(QFrame.Shape.NoFrame)
+        self.pages = QStackedWidget()
+
+        for name, box in groups:
+            item = QListWidgetItem(name)
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item.setSizeHint(QSize(0, 40))
+            self.nav_list.addItem(item)
+
+            page = QWidget()
+            page_layout = QVBoxLayout(page)
+            page_layout.setContentsMargins(0, 0, 0, 0)
+
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+
+            content_widget = QWidget()
+            content_layout = QVBoxLayout(content_widget)
+            content_layout.addWidget(box)
+            content_layout.addStretch()
+
+            scroll.setWidget(content_widget)
+            page_layout.addWidget(scroll)
+
+            self.pages.addWidget(page)
+
+        old_layout = self.layout()
+        if old_layout:
+            old_layout.removeWidget(self.scrollArea)
+            self.scrollArea.setParent(None)
+            self.scrollArea.deleteLater()
+
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.nav_list)
+        layout.addWidget(self.pages)
+
+        if old_layout:
+            old_layout.addWidget(container)
+        else:
+            main_layout = QHBoxLayout(self)
+            main_layout.setContentsMargins(0, 0, 0, 0)
+            main_layout.addWidget(container)
+
+        self.nav_list.currentRowChanged.connect(self.pages.setCurrentIndex)
+        self.nav_list.setCurrentRow(0)
 
     def init_ui(self) -> None:
         # 保存设置
@@ -105,6 +180,17 @@ class SettingWidget(QWidget, Ui_settings):
 
         # 搜索设置
         self.multi_search_source_list.set_soures(cfg["multi_search_sources"])
+        self.metadata_search_source_list.set_soures(cfg["metadata_search_sources"])
+
+        for widget in self.findChildren(QComboBox) + self.findChildren(QSpinBox):
+            widget.installEventFilter(self)
+            widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if (isinstance(watched, QComboBox) or isinstance(watched, QSpinBox)) and event.type() == QEvent.Type.Wheel and not watched.hasFocus():
+            event.ignore()
+            return True
+        return super().eventFilter(watched, event)
 
     @Slot()
     def select_default_save_path(self) -> None:
@@ -232,6 +318,7 @@ class SettingWidget(QWidget, Ui_settings):
 
         # 搜索设置
         self.multi_search_source_list.data_changed.connect(lambda: cfg.setitem("multi_search_sources", self.multi_search_source_list.get_data()))
+        self.metadata_search_source_list.data_changed.connect(lambda: cfg.setitem("metadata_search_sources", self.metadata_search_source_list.get_data()))
 
     @Slot(int)
     def color_scheme_changed(self, index: int) -> None:
