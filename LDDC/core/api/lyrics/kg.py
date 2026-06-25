@@ -216,6 +216,7 @@ class KGAPI(CloudAPI):
                             album=info["AlbumName"],
                             duration=info["Duration"] * 1000,
                             language=LANGUAGE_MAPPING.get(info["trans_param"].get("language"), Language.OTHER),
+                            extra={"Image": info.get("Image"), "PublishDate": info.get("PublishDate")},
                         )
                         for info in data["data"]["lists"]
                     ],
@@ -366,6 +367,7 @@ class KGAPI(CloudAPI):
                             album=info["album_name"],
                             duration=info["duration"] * 1000,
                             language=LANGUAGE_MAPPING.get(info["trans_param"].get("language"), Language.OTHER),
+                            extra={"Image": info.get("imgurl"), "PublishDate": info.get("publish_time")},
                         )
                         for info in data["data"]["info"]
                     ],
