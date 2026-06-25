@@ -5,7 +5,7 @@ import re
 import httpx
 from difflib import SequenceMatcher
 from PySide6.QtCore import Qt, Signal, Slot, QSize, QByteArray
-from PySide6.QtGui import QAction, QIcon, QPixmap
+from PySide6.QtGui import QAction, QIcon, QPixmap, QColor
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMenuBar,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QSplitter,
     QToolBar,
@@ -32,6 +33,21 @@ from LDDC.core.api.metadata.handler import AudioMetadataHandler
 from LDDC.core.api.metadata.models import MetadataResult
 from LDDC.core.api.metadata.sources import KgMetadataSource, NeMetadataSource, QmMetadataSource
 from LDDC.common.data.config import cfg
+from LDDC.common.logger import logger
+
+_FIELD_DEFS = [
+    ("title", "标题"),
+    ("artist", "艺术家"),
+    ("album", "专辑"),
+    ("album_artist", "专辑艺术家"),
+    ("composer", "作曲者"),
+    ("lyricist", "作词者"),
+    ("date", "年份/日期"),
+    ("genre", "流派"),
+    ("track_number", "音轨号"),
+    ("disc_number", "碟号"),
+    ("comment", "备注"),
+]
 
 class FileListWidget(QListWidget):
     def __init__(self, parent=None):
@@ -100,33 +116,28 @@ class MusicMetadataEditorWidget(QWidget):
         self.init_ui()
 
     def init_ui(self):
-        # 主布局使用水平分割器，左侧为文件列表，右侧为编辑区域
         main_layout = QHBoxLayout(self)
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         main_layout.addWidget(self.splitter)
 
-        # 左侧文件列表区域
         self.file_list_widget = QWidget()
         file_list_layout = QVBoxLayout(self.file_list_widget)
         file_list_layout.setContentsMargins(0, 0, 0, 0)
-        
-        # 文件列表标题
+
         file_list_label = QLabel("文件列表")
         file_list_layout.addWidget(file_list_label)
 
-        # 文件列表控件
         self.file_list = FileListWidget()
         self.file_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self.file_list.setDragDropMode(QListWidget.DragDropMode.DropOnly)
         self.file_list.setAcceptDrops(True)
         file_list_layout.addWidget(self.file_list)
 
-        # 底部操作按钮（如添加文件、删除文件）
         file_actions_layout = QHBoxLayout()
         self.add_files_btn = QPushButton("添加文件")
         self.add_folder_btn = QPushButton("添加文件夹")
         self.remove_file_btn = QPushButton("移除")
-        
+
         self.add_files_btn.clicked.connect(self.add_files)
         self.add_folder_btn.clicked.connect(self.add_folder)
         self.remove_file_btn.clicked.connect(self.remove_selected_files)
@@ -138,11 +149,9 @@ class MusicMetadataEditorWidget(QWidget):
 
         self.splitter.addWidget(self.file_list_widget)
 
-        # 右侧元数据编辑区域
         self.editor_widget = QWidget()
         editor_layout = QVBoxLayout(self.editor_widget)
-        
-        # 顶部工具栏区域（保存、网络匹配等）
+
         toolbar_layout = QHBoxLayout()
         self.save_btn = QPushButton("保存更改")
         self.match_net_btn = QPushButton("网络匹配")
@@ -154,46 +163,40 @@ class MusicMetadataEditorWidget(QWidget):
         toolbar_layout.addStretch()
         editor_layout.addLayout(toolbar_layout)
 
-        # 滚动区域，防止内容过多显示不下
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        
+
         self.scroll_content = QWidget()
         self.form_layout = QGridLayout(self.scroll_content)
-        
-        # 封面显示与编辑
+
         self.cover_label = QLabel("封面")
         self.cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.cover_label.setFixedSize(200, 200)
         self.cover_label.setStyleSheet("border: 1px solid gray; background-color: #f0f0f0;")
+        self.cover_label.setAcceptDrops(True)
+        self.cover_label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.cover_label.customContextMenuRequested.connect(self._on_cover_context_menu)
+        self.cover_label.installEventFilter(self)
         self.form_layout.addWidget(self.cover_label, 0, 0, 1, 2, Qt.AlignmentFlag.AlignCenter)
 
-        # 元数据字段
-        self.title_edit = self.create_field("标题", 1)
-        self.artist_edit = self.create_field("艺术家", 2)
-        self.album_edit = self.create_field("专辑", 3)
-        self.album_artist_edit = self.create_field("专辑艺术家", 4)
-        
-        self.date_edit = self.create_field("年份/日期", 5)
-        self.genre_edit = self.create_field("流派", 6)
-        self.track_number_edit = self.create_field("音轨号", 7)
-        self.disc_number_edit = self.create_field("碟号", 8)
-        
-        self.comment_edit = self.create_field("备注", 9)
-        
+        self._editors = {}
+        for i, (key, label) in enumerate(_FIELD_DEFS):
+            lbl = QLabel(label)
+            edit = QLineEdit()
+            self.form_layout.addWidget(lbl, i + 1, 0)
+            self.form_layout.addWidget(edit, i + 1, 1)
+            self._editors[key] = edit
+
         self.form_layout.setColumnStretch(1, 1)
 
-        # 信号连接
         self.file_list.currentItemChanged.connect(self.on_file_selected)
-        
+
         scroll_area.setWidget(self.scroll_content)
         editor_layout.addWidget(scroll_area)
 
         self.splitter.addWidget(self.editor_widget)
-        
-        # 设置初始分割比例：右侧编辑区域设置为整体的 1/3
-        # 左侧:右侧 = 2:1
+
         self.splitter.setStretchFactor(0, 2)
         self.splitter.setStretchFactor(1, 1)
 
@@ -205,25 +208,24 @@ class MusicMetadataEditorWidget(QWidget):
         file_path = current_item.data(Qt.ItemDataRole.UserRole)
         try:
             handler = AudioMetadataHandler(file_path)
-            
-            # 从界面获取最新数据
+
             metadata = MetadataResult(
-                title=self.title_edit.text(),
-                artist=self.artist_edit.text(),
-                album=self.album_edit.text(),
-                album_artist=self.album_artist_edit.text(),
-                date=self.date_edit.text(),
-                genre=self.genre_edit.text(),
-                track_number=self.track_number_edit.text(),
-                disc_number=self.disc_number_edit.text(),
-                comment=self.comment_edit.text(),
-                cover_data=self.current_cover_data # 传递暂存的封面数据
+                title=self._editors["title"].text(),
+                artist=self._editors["artist"].text(),
+                album=self._editors["album"].text(),
+                album_artist=self._editors["album_artist"].text(),
+                composer=self._editors["composer"].text(),
+                lyricist=self._editors["lyricist"].text(),
+                date=self._editors["date"].text(),
+                genre=self._editors["genre"].text(),
+                track_number=self._editors["track_number"].text(),
+                disc_number=self._editors["disc_number"].text(),
+                comment=self._editors["comment"].text(),
+                cover_data=self.current_cover_data,
             )
-            
-            # 保存元数据
+
             handler.save(metadata)
-            # QMessageBox.information(self, "成功", "元数据保存成功！") # 自动化流程中可移除弹窗
-            
+
         except Exception as e:
             QMessageBox.critical(self, "错误", f"保存失败: {e}")
 
@@ -275,9 +277,8 @@ class MusicMetadataEditorWidget(QWidget):
             QMessageBox.warning(self, "提示", "请先在左侧选择要匹配的文件")
             return
 
-        # 从配置中读取启用的源
         enabled_sources = cfg.get("metadata_search_sources", ["QM", "NE"])
-        
+
         sources = []
         if "QM" in enabled_sources:
             sources.append(QmMetadataSource())
@@ -285,7 +286,7 @@ class MusicMetadataEditorWidget(QWidget):
             sources.append(NeMetadataSource())
         if "KG" in enabled_sources:
             sources.append(KgMetadataSource())
-            
+
         if not sources:
             QMessageBox.warning(self, "警告", "未启用任何元数据搜索源，请在设置中配置")
             return
@@ -293,9 +294,21 @@ class MusicMetadataEditorWidget(QWidget):
         success_count = 0
         failed_files = []
         current_item = self.file_list.currentItem()
+        total = len(selected_items)
 
-        for item in selected_items:
+        progress = QProgressDialog("正在网络匹配...", "取消", 0, total, self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+
+        for i, item in enumerate(selected_items):
+            if progress.wasCanceled():
+                break
+
+            progress.setValue(i)
             file_path = item.data(Qt.ItemDataRole.UserRole)
+            progress.setLabelText(f"正在匹配: {os.path.basename(file_path)}")
+            QApplication.processEvents()
+
             try:
                 handler = AudioMetadataHandler(file_path)
                 current_meta = handler.read()
@@ -303,21 +316,25 @@ class MusicMetadataEditorWidget(QWidget):
                 best_match = self.find_best_match(keyword, sources)
 
                 if not best_match:
-                    print(f"No match found for {keyword}")
                     failed_files.append(os.path.basename(file_path))
+                    item.setBackground(QColor("#fff0f0"))
                     continue
 
                 cover_data = self.download_cover_data(best_match.cover_url) if best_match.cover_url else None
                 merged_metadata = self.merge_metadata(current_meta, best_match, cover_data)
                 handler.save(merged_metadata)
                 success_count += 1
+                item.setBackground(QColor("#f0fff0"))
 
                 if item == current_item:
                     self.apply_metadata_to_editor(merged_metadata)
 
             except Exception as e:
-                print(f"Error matching {file_path}: {e}")
+                logger.error(f"Error matching {file_path}: {e}")
                 failed_files.append(os.path.basename(file_path))
+                item.setBackground(QColor("#fff0f0"))
+
+        progress.setValue(total)
 
         if success_count == 0:
             QMessageBox.warning(self, "完成", "网络匹配已完成，但没有可写入的匹配结果")
@@ -335,7 +352,6 @@ class MusicMetadataEditorWidget(QWidget):
     def find_best_match(self, keyword: str, sources: list) -> MetadataResult | None:
         candidates: list[tuple[float, MetadataResult]] = []
         for source in sources:
-            print(f"Trying source: {type(source).__name__}")
             results = source.search(keyword)
             if not results:
                 continue
@@ -345,7 +361,6 @@ class MusicMetadataEditorWidget(QWidget):
         if not candidates:
             return None
         best = max(candidates, key=lambda item: item[0])[1]
-        print(f"Match found: {best.title} - {best.artist}")
         return best
 
     def calculate_match_score(self, keyword: str, result: MetadataResult, index: int) -> float:
@@ -370,6 +385,8 @@ class MusicMetadataEditorWidget(QWidget):
             artist=str(artist or current_meta.artist or ""),
             album=best_match.album or current_meta.album,
             album_artist=best_match.album_artist or current_meta.album_artist,
+            composer=best_match.composer or current_meta.composer,
+            lyricist=best_match.lyricist or current_meta.lyricist,
             date=match_year or current_meta.date,
             genre=best_match.genre or current_meta.genre,
             track_number=best_match.track_number or current_meta.track_number,
@@ -389,20 +406,28 @@ class MusicMetadataEditorWidget(QWidget):
         return None
 
     def apply_metadata_to_editor(self, metadata: MetadataResult):
-        self.title_edit.setText(metadata.title or "")
-        self.artist_edit.setText(metadata.artist or "")
-        self.album_edit.setText(metadata.album or "")
-        self.album_artist_edit.setText(metadata.album_artist or "")
-        self.date_edit.setText(metadata.date or "")
-        self.genre_edit.setText(metadata.genre or "")
-        self.track_number_edit.setText(metadata.track_number or "")
-        self.disc_number_edit.setText(metadata.disc_number or "")
-        self.comment_edit.setText(metadata.comment or "")
+        for key, _ in _FIELD_DEFS:
+            value = getattr(metadata, key, "")
+            self._editors[key].setText(value or "")
         self.current_cover_data = metadata.cover_data
+        self._display_cover(metadata.cover_data)
 
-        if metadata.cover_data:
+    def download_cover_data(self, url: str) -> bytes | None:
+        if not url:
+            return None
+        try:
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+            response = httpx.get(url, headers=headers, timeout=10, follow_redirects=True)
+            response.raise_for_status()
+            return response.content
+        except Exception as e:
+            logger.error(f"Error loading cover from {url}: {e}")
+            return None
+
+    def _display_cover(self, cover_data: bytes | None):
+        if cover_data:
             pixmap = QPixmap()
-            pixmap.loadFromData(QByteArray(metadata.cover_data))
+            pixmap.loadFromData(QByteArray(cover_data))
             if not pixmap.isNull():
                 self.cover_label.setPixmap(
                     pixmap.scaled(
@@ -417,41 +442,71 @@ class MusicMetadataEditorWidget(QWidget):
         self.cover_label.setText("无封面")
         self.cover_label.setStyleSheet("border: 1px solid gray; background-color: #f0f0f0;")
 
-    def download_cover_data(self, url: str) -> bytes | None:
-        if not url:
-            return None
-        try:
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-            response = httpx.get(url, headers=headers, timeout=10, follow_redirects=True)
-            response.raise_for_status()
-            return response.content
-        except Exception as e:
-            print(f"Error loading cover from {url}: {e}")
-            return None
+    def _on_cover_context_menu(self, pos):
+        menu = QMenu(self)
+        paste_action = menu.addAction("从剪贴板粘贴")
+        save_action = menu.addAction("导出封面图片...")
+        clear_action = menu.addAction("清除封面")
+
+        action = menu.exec(self.cover_label.mapToGlobal(pos))
+        if action == paste_action:
+            self._paste_cover()
+        elif action == save_action:
+            self._export_cover()
+        elif action == clear_action:
+            self.current_cover_data = None
+            self._display_cover(None)
+
+    def _paste_cover(self):
+        clipboard = QApplication.clipboard()
+        mime = clipboard.mimeData()
+        if mime.hasImage():
+            image = clipboard.image()
+            if not image.isNull():
+                ba = QByteArray()
+                buf = image.save(ba, "JPG")
+                if buf:
+                    self.current_cover_data = ba.data()
+                    self._display_cover(self.current_cover_data)
+                    return
+        if mime.hasUrls():
+            for url in mime.urls():
+                file_path = url.toLocalFile()
+                if os.path.isfile(file_path):
+                    try:
+                        with open(file_path, "rb") as f:
+                            self.current_cover_data = f.read()
+                        self._display_cover(self.current_cover_data)
+                        return
+                    except Exception as e:
+                        logger.error(f"Failed to load cover from clipboard file: {e}")
+        QMessageBox.warning(self, "提示", "剪贴板中没有可用的图片")
+
+    def _export_cover(self):
+        if not self.current_cover_data:
+            QMessageBox.warning(self, "提示", "没有封面数据可导出")
+            return
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "导出封面", "cover.jpg", "JPEG (*.jpg);;PNG (*.png);;All Files (*)"
+        )
+        if file_path:
+            try:
+                with open(file_path, "wb") as f:
+                    f.write(self.current_cover_data)
+            except Exception as e:
+                QMessageBox.critical(self, "错误", f"导出失败: {e}")
 
     def load_cover_from_url(self, url):
         cover_data = self.download_cover_data(url)
         if cover_data is None:
             return
         self.current_cover_data = cover_data
-        pixmap = QPixmap()
-        pixmap.loadFromData(QByteArray(cover_data))
-        if not pixmap.isNull():
-            self.cover_label.setPixmap(
-                pixmap.scaled(
-                    self.cover_label.size(),
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                ),
-            )
-            self.cover_label.setStyleSheet("")
-        else:
-            print(f"Failed to load image data from {url}")
+        self._display_cover(cover_data)
 
     def on_file_selected(self, current, previous):
         if not current:
             return
-            
+
         file_path = current.data(Qt.ItemDataRole.UserRole)
         self.load_metadata(file_path)
 
@@ -459,46 +514,48 @@ class MusicMetadataEditorWidget(QWidget):
         try:
             handler = AudioMetadataHandler(file_path)
             metadata = handler.read()
-            
-            self.title_edit.setText(metadata.title or "")
-            self.artist_edit.setText(metadata.artist or "")
-            self.album_edit.setText(metadata.album or "")
-            self.album_artist_edit.setText(metadata.album_artist or "")
-            self.date_edit.setText(metadata.date or "")
-            self.genre_edit.setText(metadata.genre or "")
-            self.track_number_edit.setText(metadata.track_number or "")
-            self.disc_number_edit.setText(metadata.disc_number or "")
-            self.comment_edit.setText(metadata.comment or "") if hasattr(metadata, 'comment') else self.comment_edit.clear()
-            
-            # 封面处理
-            self.current_cover_data = None # 重置暂存的封面数据
-            if hasattr(metadata, 'cover_data') and metadata.cover_data:
-                self.current_cover_data = metadata.cover_data # 暂存本地读取的封面
-                pixmap = QPixmap()
-                pixmap.loadFromData(QByteArray(metadata.cover_data))
-                if not pixmap.isNull():
-                    self.cover_label.setPixmap(pixmap.scaled(
-                        self.cover_label.size(), 
-                        Qt.AspectRatioMode.KeepAspectRatio, 
-                        Qt.TransformationMode.SmoothTransformation
-                    ))
-                    self.cover_label.setStyleSheet("") # 清除边框背景
-                else:
-                    self.cover_label.setText("无效封面")
-                    self.cover_label.setStyleSheet("border: 1px solid gray; background-color: #f0f0f0;")
-            else:
-                self.cover_label.setText("无封面")
-                self.cover_label.setStyleSheet("border: 1px solid gray; background-color: #f0f0f0;")
-            
+
+            for key, _ in _FIELD_DEFS:
+                value = getattr(metadata, key, "")
+                if value is None:
+                    value = ""
+                self._editors[key].setText(str(value))
+
+            self.current_cover_data = metadata.cover_data
+            self._display_cover(metadata.cover_data)
+
         except Exception as e:
             QMessageBox.warning(self, "读取错误", f"无法读取文件元数据: {e}")
 
-    def create_field(self, label_text, row):
-        label = QLabel(label_text)
-        edit = QLineEdit()
-        self.form_layout.addWidget(label, row, 0)
-        self.form_layout.addWidget(edit, row, 1)
-        return edit
+    def eventFilter(self, obj, event):
+        from PySide6.QtCore import QEvent
+        if obj is self.cover_label:
+            if event.type() == QEvent.Type.DragEnter:
+                if event.mimeData().hasUrls() or event.mimeData().hasImage():
+                    event.acceptProposedAction()
+                    return True
+            elif event.type() == QEvent.Type.Drop:
+                mime = event.mimeData()
+                if mime.hasUrls():
+                    for url in mime.urls():
+                        file_path = url.toLocalFile()
+                        if os.path.isfile(file_path):
+                            try:
+                                with open(file_path, "rb") as f:
+                                    self.current_cover_data = f.read()
+                                self._display_cover(self.current_cover_data)
+                                return True
+                            except Exception as e:
+                                logger.error(f"Failed to load dropped cover: {e}")
+                elif mime.hasImage():
+                    image = event.mimeData().imageData()
+                    if image:
+                        ba = QByteArray()
+                        image.save(ba, "JPG")
+                        self.current_cover_data = ba.data()
+                        self._display_cover(self.current_cover_data)
+                        return True
+        return super().eventFilter(obj, event)
 
 if __name__ == "__main__":
     app = QApplication([])

@@ -1,12 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (C) 2024-2025 沉默の金 <cmzj@cmzj.org>
 # SPDX-License-Identifier: GPL-3.0-only
 import mutagen
-from mutagen.id3 import ID3, TIT2, TPE1, TALB, TPE2, TDRC, TCON, TRCK, TPOS, COMM, USLT, APIC
+from mutagen.id3 import ID3, TIT2, TPE1, TALB, TPE2, TCOM, TEXT, TDRC, TCON, TRCK, TPOS, COMM, USLT, APIC
 from mutagen.mp4 import MP4, MP4Tags, MP4Cover
 from mutagen.flac import FLAC, Picture
 from mutagen.oggvorbis import OggVorbis
 import os
 import base64
+from LDDC.common.logger import logger
 from .models import MetadataResult
 
 class AudioMetadataHandler:
@@ -17,7 +18,7 @@ class AudioMetadataHandler:
             self.audio = mutagen.File(file_path)
             self.ext = os.path.splitext(file_path)[1].lower()
         except Exception as e:
-            print(f"Failed to load file {file_path}: {e}")
+            logger.error(f"Failed to load file {file_path}: {e}")
             self.audio = None
             self.ext = ""
 
@@ -36,6 +37,8 @@ class AudioMetadataHandler:
                     result.artist = str(tags.get('TPE1', [''])[0])
                     result.album = str(tags.get('TALB', [''])[0])
                     result.album_artist = str(tags.get('TPE2', [''])[0])
+                    result.composer = str(tags.get('TCOM', [''])[0])
+                    result.lyricist = str(tags.get('TEXT', [''])[0])
                     
                     # 年份处理：TDRC (ID3v2.4) or TYER (ID3v2.3)
                     date = tags.get('TDRC')
@@ -59,12 +62,14 @@ class AudioMetadataHandler:
                             result.cover_data = apic.data
                             break
             
-            elif self.ext == '.flac':
-                # FLAC Tags (Vorbis Comments + Pictures)
+            elif self.ext in ('.flac', '.wav'):
+                # FLAC / WAV (Vorbis Comments / RIFF INFO)
                 result.title = self.audio.get('title', [''])[0]
                 result.artist = self.audio.get('artist', [''])[0]
                 result.album = self.audio.get('album', [''])[0]
                 result.album_artist = self.audio.get('albumartist', [''])[0]
+                result.composer = self.audio.get('composer', [''])[0]
+                result.lyricist = self.audio.get('lyricist', [''])[0]
                 result.date = self.audio.get('date', [''])[0]
                 result.genre = self.audio.get('genre', [''])[0]
                 result.track_number = self.audio.get('tracknumber', [''])[0]
@@ -78,17 +83,26 @@ class AudioMetadataHandler:
                     result.cover_data = self.audio.pictures[0].data
 
             elif self.ext == '.ogg':
-                # Ogg Vorbis (通常没有标准封面字段，部分播放器使用 METADATA_BLOCK_PICTURE 的 base64)
-                # 简单实现，暂略过复杂封面处理
                 result.title = self.audio.get('title', [''])[0]
                 result.artist = self.audio.get('artist', [''])[0]
                 result.album = self.audio.get('album', [''])[0]
                 result.album_artist = self.audio.get('albumartist', [''])[0]
+                result.composer = self.audio.get('composer', [''])[0]
+                result.lyricist = self.audio.get('lyricist', [''])[0]
                 result.date = self.audio.get('date', [''])[0]
                 result.genre = self.audio.get('genre', [''])[0]
                 result.track_number = self.audio.get('tracknumber', [''])[0]
                 result.disc_number = self.audio.get('discnumber', [''])[0]
                 result.comment = self.audio.get('comment', [''])[0]
+
+                pic_b64 = self.audio.get('metadata_block_picture', [None])[0]
+                if pic_b64:
+                    try:
+                        pic_data = base64.b64decode(pic_b64)
+                        picture = Picture(pic_data)
+                        result.cover_data = picture.data
+                    except Exception:
+                        pass
 
             elif self.ext == '.m4a':
                 # MP4 Tags
@@ -98,6 +112,9 @@ class AudioMetadataHandler:
                     result.artist = tags.get('\xa9ART', [''])[0]
                     result.album = tags.get('\xa9alb', [''])[0]
                     result.album_artist = tags.get('aART', [''])[0]
+                    result.composer = tags.get('\xa9wrt', [''])[0]
+                    lyricist_raw = tags.get('----:com.apple.iTunes:LYRICIST', [b''])[0]
+                    result.lyricist = lyricist_raw.decode('utf-8', errors='replace') if isinstance(lyricist_raw, bytes) else str(lyricist_raw)
                     result.date = tags.get('\xa9day', [''])[0]
                     result.genre = tags.get('\xa9gen', [''])[0]
                     # trkn and disk are tuples
@@ -115,7 +132,7 @@ class AudioMetadataHandler:
                         result.cover_data = covers[0]
         
         except Exception as e:
-            print(f"Error reading metadata for {self.file_path}: {e}")
+            logger.error(f"Error reading metadata for {self.file_path}: {e}")
 
         # 如果标题为空，尝试使用文件名
         if not result.title:
@@ -148,15 +165,21 @@ class AudioMetadataHandler:
                 tags.delall("COMM")
                 if metadata.comment:
                     tags.add(COMM(encoding=3, lang="eng", desc="", text=metadata.comment))
+                if metadata.composer:
+                    tags["TCOM"] = TCOM(encoding=3, text=metadata.composer)
+                if metadata.lyricist:
+                    tags["TEXT"] = TEXT(encoding=3, text=metadata.lyricist)
                 tags.delall("APIC")
                 if metadata.cover_data:
                     tags.add(APIC(encoding=3, mime=self._guess_mime_type(metadata.cover_data), type=3, desc="Cover", data=metadata.cover_data))
 
-            elif self.ext == '.flac':
+            elif self.ext in ('.flac', '.wav'):
                 self.audio['title'] = metadata.title
                 self.audio['artist'] = metadata.artist
                 self.audio['album'] = metadata.album
                 if metadata.album_artist: self.audio['albumartist'] = metadata.album_artist
+                if metadata.composer: self.audio['composer'] = metadata.composer
+                if metadata.lyricist: self.audio['lyricist'] = metadata.lyricist
                 if metadata.date: self.audio['date'] = metadata.date
                 if metadata.genre: self.audio['genre'] = metadata.genre
                 if metadata.track_number: self.audio['tracknumber'] = metadata.track_number
@@ -175,6 +198,8 @@ class AudioMetadataHandler:
                 self.audio['artist'] = metadata.artist
                 self.audio['album'] = metadata.album
                 if metadata.album_artist: self.audio['albumartist'] = metadata.album_artist
+                if metadata.composer: self.audio['composer'] = metadata.composer
+                if metadata.lyricist: self.audio['lyricist'] = metadata.lyricist
                 if metadata.date: self.audio['date'] = metadata.date
                 if metadata.genre: self.audio['genre'] = metadata.genre
                 if metadata.track_number: self.audio['tracknumber'] = metadata.track_number
@@ -196,8 +221,16 @@ class AudioMetadataHandler:
                 tags['\xa9ART'] = metadata.artist
                 tags['\xa9alb'] = metadata.album
                 if metadata.album_artist: tags['aART'] = metadata.album_artist
+                if metadata.composer: tags['\xa9wrt'] = metadata.composer
+                if metadata.lyricist: tags['----:com.apple.iTunes:LYRICIST'] = [metadata.lyricist.encode('utf-8')]
                 if metadata.date: tags['\xa9day'] = metadata.date
                 if metadata.genre: tags['\xa9gen'] = metadata.genre
+                if metadata.track_number:
+                    trkn_parts = metadata.track_number.split('/')
+                    tags['trkn'] = [(int(trkn_parts[0]), int(trkn_parts[1]) if len(trkn_parts) > 1 else 0)]
+                if metadata.disc_number:
+                    disk_parts = metadata.disc_number.split('/')
+                    tags['disk'] = [(int(disk_parts[0]), int(disk_parts[1]) if len(disk_parts) > 1 else 0)]
                 if metadata.comment: tags['\xa9cmt'] = metadata.comment
                 if metadata.cover_data:
                     cover_format = MP4Cover.FORMAT_JPEG if self._guess_mime_type(metadata.cover_data) == "image/jpeg" else MP4Cover.FORMAT_PNG
@@ -206,7 +239,7 @@ class AudioMetadataHandler:
             self.audio.save()
 
         except Exception as e:
-            print(f"Error saving metadata for {self.file_path}: {e}")
+            logger.error(f"Error saving metadata for {self.file_path}: {e}")
 
     def _guess_mime_type(self, data: bytes) -> str:
         if data.startswith(b"\x89PNG\r\n\x1a\n"):

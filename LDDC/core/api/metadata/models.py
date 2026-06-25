@@ -13,8 +13,10 @@ class MetadataResult:
     genre: Optional[str] = None
     track_number: Optional[str] = None
     disc_number: Optional[str] = None
+    composer: Optional[str] = None
+    lyricist: Optional[str] = None
     cover_url: Optional[str] = None
-    cover_data: Optional[bytes] = None # 用于存储本地读取的封面数据
+    cover_data: Optional[bytes] = None
     comment: Optional[str] = None
     source: str = ""
     id: str = ""
